@@ -1,0 +1,390 @@
+---
+title: '2'
+output: html_document
+---
+---
+title: "R Notebook"
+output: html_notebook
+---
+Introduction:
+Wisconsin Breast Cancer Data Alanysis
+
+Loading libraries:
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(ggfortify)
+library(fastICA)
+library(cluster)
+library(caret)
+library(funModeling)
+library(randomForest)
+library(mlbench)
+library(glmnet)
+library(relaimpo)
+library(corrplot)
+library(ROCR)
+library(pROC)
+library(MASS)
+library(gridExtra)
+library(ISLR)
+library(tree)
+library(gbm)
+library(rpart)
+library(e1071)
+```
+
+Data cleaning:
+```{r}
+data(BreastCancer)
+data <- BreastCancer 
+data <- na.omit(data)
+names(data)[11]<-"Diagnosis"
+names(data)[10]<-"Mitosis"
+data$Id <- as.numeric(data$Id)
+data$Cl.thickness <- as.numeric(data$Cl.thickness)
+data$Cell.size <- as.numeric(data$Cell.size)
+data$Cell.shape <- as.numeric(data$Cell.shape)
+data$Marg.adhesion <- as.numeric(data$Marg.adhesion)
+data$Epith.c.size <- as.numeric(data$Epith.c.size)
+data$Bare.nuclei <- as.numeric(data$Bare.nuclei)
+data$Bl.cromatin <- as.numeric(data$Bl.cromatin)
+data$Normal.nucleoli <- as.numeric(data$Normal.nucleoli)
+data$Mitosis <- as.numeric(data$Mitosis)
+glimpse(data)
+```
+
+Proportion of benign vs malignant diagnosis
+```{r}
+(round(prop.table(table(data$Diagnosis)), 2))
+plot(data$Diagnosis)
+```
+
+Correlation of variables:
+```{r}
+correlation_matrix = cor(data[,1:10])
+corrplot(correlation_matrix, order = "hclust", method = "square")
+```
+
+Variable Distribution:
+```{r}
+dataclust <- data[2:10]
+
+pdf("distv2.pdf", height = 10, width = 15)
+plot_num(dataclust)
+dev.off()
+```
+
+
+Dendrogram:
+```{r}
+hierarchical_dist <- dist(dataclust, method = "euclidean")
+tree <- hclust(hierarchical_dist, method="average")
+
+pdf("dendrogramv2.pdf", height =15, width = 50)
+plot(tree)
+dev.off() 
+```
+
+
+PCA:
+```{r}
+
+pca2 <- data.matrix(dataclust)
+
+Center <- apply(pca2, 2, function(x) x - mean(x))
+Covariance <- cov(Center)
+Eigen_value <- eigen(Covariance)$value
+
+Eigen_vector <- eigen(Covariance)$vector
+PC <- as.data.frame(data.matrix(Center) %*% Eigen_vector)
+
+ggplot(PC, aes(PC[,1], PC[,2])) + geom_point(aes(PC[,1], PC[,2]))
+round(cumsum(Eigen_value)/sum(Eigen_value) * 100, digits = 2)
+
+autoplot(prcomp(pca2))
+```
+
+
+ICA:
+```{r}
+a <- fastICA(dataclust, 7, alg.typ = "parallel", fun = "logcosh", alpha = 1,
+             method = "R", row.norm = FALSE, maxit = 200,
+             tol = 0.0001, verbose = TRUE)
+heatmap(a$S)
+```
+
+Modeling:
+
+Split into test/training sets:
+```{r}
+dt = sort(sample(nrow(data), nrow(data)*.75))
+trainset = data[dt,] 
+testset = data[-dt,]
+prop.table(table(trainset$Diagnosis))
+```
+
+Feature Selection:
+
+RFE
+```{r}
+control = rfeControl(functions = caretFuncs, number = 2)
+results = rfe(data[,1:10], data[,11], sizes = c(2,5,9,11), rfeControl = control, method = "svmRadial")
+results
+results$variables
+```
+
+Random Forests:
+```{r}
+train <- floor(0.75 * nrow(data))
+train1 <- sample(seq_len(nrow(data)), size = train)
+train_class <- data[train1, ]
+test_class <- data[-train1, ]
+dim(train_class)
+dim(test_class)
+
+rfmodel = randomForest(Diagnosis ~ Cl.thickness + Cell.size + Cell.shape + Marg.adhesion + Epith.c.size + Bare.nuclei + Bl.cromatin + Normal.nucleoli +  Mitosis, data=train_class,  importance = TRUE, oob.times = 15, confusion = TRUE)
+importance(rfmodel)
+```
+
+Simulated Annealing:
+```{r}
+ctrl <- safsControl(functions = rfSA,
+                        method = "repeatedcv",
+                        repeats = 3,
+                        improve = 5) 
+
+set.seed(100)
+sa <- safs(x=data[, c(1:10)], 
+               y=data[, 11],
+               safsControl = ctrl)
+
+
+print(sa$optVariables)
+```
+
+Top 5 Variables: Cl.thickness, Cell.size, Cell.shape, Epith.c.size, Bl.cromatin
+
+Classification:
+
+LDA:
+```{r}
+Clthickness <- ggplot(data = data, aes(x = Cl.thickness, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10)  +
+  theme_bw()
+Cellsize <- ggplot(data = data, aes(x = Cell.size, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Cellshape <- ggplot(data = data, aes(x = Cell.shape, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Margadhesion <- ggplot(data = data, aes(x = Marg.adhesion, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Epithcsize <- ggplot(data = data, aes(x = Epith.c.size, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Barenuclei <- ggplot(data = data, aes(x = Bare.nuclei, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Blcromatin <- ggplot(data = data, aes(x = Bl.cromatin, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Normalnucleoli <- ggplot(data = data, aes(x = Normal.nucleoli, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Mitosis1 <- ggplot(data = data, aes(x = Mitosis, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+grid.arrange(Clthickness, Cellsize, Cellshape, Margadhesion, Epithcsize, Barenuclei, Blcromatin, Normalnucleoli, Mitosis1)
+```
+
+LDA of top 5 variables: Graphs
+```{r}
+Clthickness <- ggplot(data = data, aes(x = Cl.thickness, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10)  +
+  theme_bw()
+Cellsize <- ggplot(data = data, aes(x = Cell.size, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Cellshape <- ggplot(data = data, aes(x = Cell.shape, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Epithcsize <- ggplot(data = data, aes(x = Epith.c.size, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+Blcromatin <- ggplot(data = data, aes(x = Bl.cromatin, fill = Diagnosis)) + 
+  geom_histogram(position="identity", alpha=0.5, bins= 10) +
+  theme_bw()
+
+grid.arrange(Clthickness, Cellsize, Cellshape, Epithcsize, Blcromatin)
+```
+
+LDA Data Top 5 Variables:
+```{r}
+
+LDA <- lda(Diagnosis~ Cl.thickness+ Cell.size+ Cell.shape+ Epith.c.size+ Bl.cromatin, 
+           data= train_class, cv= T)
+LDA
+```
+
+LDA Model Test:
+```{r}
+LDA_predict <- predict(LDA, newdata=test_class)
+cm1 <- confusionMatrix(LDA_predict$class, reference = test_class$Diagnosis)
+cm1
+
+fourfoldplot(cm1$table)
+```
+
+```{r}
+# save the predictions in a new variable
+predictions <- as.data.frame(LDA_predict$posterior) %>% 
+  rownames_to_column("idx")
+
+head(predictions)
+
+test_classifier <- test_class %>% 
+  rownames_to_column("idx")
+
+predictions_actual <- full_join(predictions,test_classifier, by = "idx" )
+
+# choose the two classes we want to compare, setosa and versicolor
+set_vers_true_labels <- predictions_actual %>% 
+  filter(Diagnosis %in% c("benign", "malignant")) %>% 
+  mutate(Diagnosis = as.character(Diagnosis)) 
+  
+#make dataframe of the prediction and the label
+pred_label <- data.frame(prediction = set_vers_true_labels$malignant,
+                         label = set_vers_true_labels$Diagnosis)
+
+#ggplot(pred_label, aes(x = 1:24, y = prediction, color = label))+
+  #geom_point()
+
+pred <- prediction(set_vers_true_labels$malignant, set_vers_true_labels$Diagnosis, 
+label.ordering = c("benign", "malignant")) 
+
+perf <- performance(pred,"tpr","fpr")
+plot(perf)
+```
+
+
+Logistic Regression:
+```{r}
+train_classifier_log <- train_class[c(which(train_class$Diagnosis == "benign"),
+                                           which(train_class$Diagnosis == "malignant")),]
+test_classifier_log <- test_class[c(which(test_class$Diagnosis == "benign"), 
+                                         which(test_class$Diagnosis == "malignant")),]
+
+train_classifier_log$Diagnosis <- factor(train_classifier_log$Diagnosis)
+test_classifier_log$Diagnosis <- factor(test_classifier_log$Diagnosis)
+
+ctrl1 <- trainControl(method = "repeatedcv", repeats = 15,classProbs = T,
+                     savePredictions = T)
+
+logistic_regression <- train(Diagnosis~ Cl.thickness+ Cell.size+ Cell.shape+ Epith.c.size+ Bl.cromatin, data = train_classifier_log, method = "glm", family= "binomial", trControl = ctrl1)
+logistic_regression
+summary(logistic_regression)
+```
+
+ROC Curve:
+```{r}
+plot(x = roc(predictor = logistic_regression$pred$benign,
+             response = logistic_regression$pred$obs)$specificities, 
+     y = roc(predictor = logistic_regression$pred$benign, 
+             response = logistic_regression$pred$obs)$sensitivities,
+     col= "blue", xlim = c(1, 0), type ="l", ylab = "Sensitivity",
+     xlab = "Specificity")
+legend("bottomright", legend = paste("Benign vs Malignant --", 
+                                     roc(predictor = logistic_regression$pred$benign,
+                                         response = logistic_regression$pred$obs)$auc
+, sep = ""), col = c("blue"), fill = c("blue"))
+```
+
+Logistic Regression Model Test:
+```{r}
+logistic_regression_predict_class <- predict(logistic_regression, 
+                                             newdata = test_classifier_log)
+
+#confusion matrix
+cm2 <-confusionMatrix(logistic_regression_predict_class, 
+                reference = test_classifier_log$Diagnosis)
+cm2
+fourfoldplot(cm2$table)
+```
+
+Decision Tree:
+```{r}
+model_dtree<- rpart(Diagnosis ~ Cl.thickness + Cell.size + Cell.shape + Epith.c.size + Bl.cromatin, data = train_class)       
+preds_dtree <- predict(model_dtree, newdata = test_class, type = "class")
+plot(preds_dtree, main="Decision tree created using rpart")
+predict_dtree <- table(preds_dtree, test_class$Diagnosis)
+cm3 <- confusionMatrix(predict_dtree)
+cm3
+fourfoldplot(cm3$table)
+```
+
+Naive Bayes
+```{r}
+model_naive<- naiveBayes(Diagnosis ~ Cl.thickness + Cell.size + Cell.shape + Epith.c.size + Bl.cromatin, data = train_class)   
+preds_naive <- predict(model_naive, newdata = test_class)        
+test_naive <- table(preds_naive, test_class$Diagnosis)
+
+cm4 <- confusionMatrix(test_naive) 
+cm4
+fourfoldplot(cm4$table)
+plot(preds_naive, main="Naive Bayes")
+```
+
+SVM
+```{r}
+control = trainControl(method = "repeatedcv", repeats = 5, classProbs = T, savePredictions = T)
+
+svm = train(Diagnosis ~ Cl.thickness + Cell.size + Cell.shape + Epith.c.size + Bl.cromatin,  data = train_class, method = "svmLinear", tuneLength = 10, trControl = control)
+
+svm
+```
+
+ROC 
+```{r}
+roc(predictor = svm$pred$malignant, response = svm$pred$obs)$auc
+
+plot(x = roc(predictor = svm$pred$malignant, response = svm$pred$obs)$specificities, y = roc(predictor = svm$pred$malignant, response = svm$pred$obs)$sensitivities, col= "blue", xlim = c(1, 0), type ="l", ylab = "Sensitivity", xlab = "Specificity") 
+legend("bottomright", legend = paste("Benign vs Malignant --", 
+                                     roc(predictor = svm$pred$benign,
+                                         response = svm$pred$obs)$auc))
+```
+
+SVM Test:
+```{r}
+svm_test = predict(svm, newdata = test_class)
+cm5 <- confusionMatrix(svm_test, reference = test_class$Diagnosis)
+cm5
+fourfoldplot(cm5$table)
+```
+
+SVM Radial Kernel:
+```{r}
+control = trainControl(method = "repeatedcv", repeats = 5, classProbs = T, savePredictions = T)
+
+svmr = train(Diagnosis ~ Cl.thickness + Cell.size + Cell.shape + Epith.c.size + Bl.cromatin,  data = train_class, method = "svmRadial", tuneLength = 10, trControl = control)
+
+svmr
+```
+
+ROC:
+```{r}
+roc(predictor = svm$pred$malignant, response = svm$pred$obs)$auc
+
+plot(x = roc(predictor = svm$pred$malignant, response = svm$pred$obs)$specificities, y = roc(predictor = svm$pred$malignant, response = svm$pred$obs)$sensitivities, col= "blue", xlim = c(1, 0), type ="l", ylab = "Sensitivity", xlab = "Specificity")
+legend("bottomright", legend = paste("Benign vs Malignant --", 
+                                     roc(predictor = svmr$pred$benign,
+                                         response = svmr$pred$obs)$auc))
+```
+
+SVM Radial Test:
+```{r}
+svmr_test = predict(svmr, newdata = test_class)
+confusionMatrix(svmr_test, reference = test_class$Diagnosis)
+```
+
